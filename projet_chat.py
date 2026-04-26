@@ -9,14 +9,13 @@ from nltk.stem import WordNetLemmatizer, PorterStemmer
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import GridSearchCV  # ✅ AJOUT TUNING
 
 # CONFIG
-
 st.set_page_config(page_title="🎬 Sencine", layout="centered")
 
-
 # NLTK setup
-
 @st.cache_resource
 def load_nltk():
     nltk.download('punkt', quiet=True)
@@ -26,9 +25,7 @@ def load_nltk():
 
 load_nltk()
 
-
 # NLP Tools
-
 stop_words = set(stopwords.words('english') + stopwords.words('french'))
 lemmatizer = WordNetLemmatizer()
 stemmer = PorterStemmer()
@@ -41,43 +38,89 @@ def preprocess(text):
     tokens = [stemmer.stem(w) for w in tokens]
     return " ".join(tokens)
 
-
-#  Model
-
+# =========================
+# MODELS + TUNING 🔥
+# =========================
 @st.cache_data
 def train_model():
     try:
         df = pd.read_csv("data.csv")
         df["clean_text"] = df["text"].apply(preprocess)
+
         vectorizer = TfidfVectorizer()
         X = vectorizer.fit_transform(df["clean_text"])
         y = df["label"]
 
-        model = MultinomialNB()
-        model.fit(X, y)
+        # =====================
+        # 🔵 NAIVE BAYES TUNING
+        # =====================
+        nb = MultinomialNB()
+        nb_params = {
+            "alpha": [0.1, 0.5, 1.0, 2.0]
+        }
 
-        return model, vectorizer
+        nb_grid = GridSearchCV(nb, nb_params, cv=3, n_jobs=-1)
+        nb_grid.fit(X, y)
+        nb_model = nb_grid.best_estimator_
+
+        # =====================
+        # 🌳 DECISION TREE TUNING
+        # =====================
+        dt = DecisionTreeClassifier()
+        dt_params = {
+            "criterion": ["gini", "entropy"],
+            "max_depth": [None, 10, 20],
+            "min_samples_split": [2, 5, 10]
+        }
+
+        dt_grid = GridSearchCV(dt, dt_params, cv=3, n_jobs=-1)
+        dt_grid.fit(X, y)
+        dt_model = dt_grid.best_estimator_
+
+        # 🔥 Affichage dans sidebar
+        st.sidebar.write("🔧 NB params :", nb_grid.best_params_)
+        st.sidebar.write("🔧 DT params :", dt_grid.best_params_)
+        st.sidebar.write("📊 NB score :", round(nb_grid.best_score_, 3))
+        st.sidebar.write("📊 DT score :", round(dt_grid.best_score_, 3))
+
+        return nb_model, dt_model, vectorizer
+
     except FileNotFoundError:
         st.error("❌ Fichier **data.csv** introuvable.")
         st.stop()
 
-model, vectorizer = train_model()
+nb_model, dt_model, vectorizer = train_model()
 
+# =========================
+# CHOIX DU MODELE
+# =========================
+model_choice = st.radio(
+    "🤖 Choisissez le modèle",
+    ["Naive Bayes", "Decision Tree"]
+)
 
-# Prediction
-
-def predict(text):
+# =========================
+# PREDICTION
+# =========================
+def predict(text, model_choice):
     clean = preprocess(text)
     vect = vectorizer.transform([clean])
 
+    if model_choice == "Naive Bayes":
+        model = nb_model
+    else:
+        model = dt_model
+
     pred = model.predict(vect)[0]
-    proba = model.predict_proba(vect)[0]
 
-    confidence = max(proba)  # niveau de confiance
+    try:
+        proba = model.predict_proba(vect)[0]
+        confidence = max(proba)
+    except:
+        confidence = 1.0
 
-    # Seuil de confiance (tu peux ajuster)
     if confidence < 0.6:
-        return "🤔 Veuillez donner un avis plus clair !",  clean, confidence
+        return "🤔 Veuillez donner un avis plus clair !", clean, confidence
 
     if pred == 1:
         result = "😊 Positif"
@@ -86,62 +129,51 @@ def predict(text):
 
     return result, clean, confidence
 
-# -----------------------------
-# LOAD MOVIES (nouveau fichier CSV)
-# -----------------------------
-
-st.title("🎬 Analyser les films et les series sénégalaises") 
+# =========================
+# MOVIES
+# =========================
+st.title("🎬 Analyser les films et les séries sénégalaises")
 
 try:
     movies_df = pd.read_csv("movies.csv")
-    
-    # Nettoyage important (supprime les espaces en trop)
     movies_df["titre"] = movies_df["titre"].astype(str).str.strip()
-    
-    # Liste triée pour le selectbox
     movie_list = sorted(movies_df["titre"].unique().tolist())
-    
+
 except FileNotFoundError:
-    st.error("❌ Fichier **movies.csv** introuvable. Place-le dans le même dossier que ton app.")
-    st.stop()
-except Exception as e:
-    st.error(f"Erreur lors du chargement du CSV : {e}")
+    st.error("❌ Fichier **movies.csv** introuvable.")
     st.stop()
 
-st.subheader("🎬 Choisissez un film ou un série")
-movie_selected = st.selectbox("Liste des films et séries sénégalaises", movie_list)
+st.subheader("🎬 Choisissez un film ou une série")
+movie_selected = st.selectbox("Liste des films et séries", movie_list)
 
-# Récupération propre de la ligne
 selected_row = movies_df[movies_df["titre"] == movie_selected].iloc[0]
 
-# Affichage enrichi
 st.write(f"**Type :** {selected_row['type']}")
 st.write(f"**Année :** {selected_row.get('annee', 'Non renseignée')}")
 st.write(f"**Réalisateur :** {selected_row.get('realisateur', 'Non renseigné')}")
 st.write("📖 **Description :**")
 st.write(selected_row["description"])
 
-
-# User Review
-
+# =========================
+# USER REVIEW
+# =========================
 st.subheader("💬 Donnez votre avis")
-user_review = st.text_area("Votre impression sur le film", height=150)
+user_review = st.text_area("Votre impression", height=150)
 
 if st.button("🔍 Valider mon avis", type="primary"):
     if not user_review.strip():
         st.warning("Veuillez écrire un avis.")
     else:
-        result, clean_text, confidence = predict(user_review)
+        result, clean_text, confidence = predict(user_review, model_choice)
 
-        st.success(f"**Sentiment détecté :** {result}")
+        st.success(f"**Sentiment :** {result}")
         st.write(f"Confiance : {confidence:.2f}")
 
         with st.expander("Texte nettoyé"):
             st.code(clean_text)
 
-        # ❌ NE PAS SAUVEGARDER SI PAS CLAIR
         if confidence < 0.6:
-            st.warning("⚠️ Avis non enregistré car il n’est pas assez clair.")
+            st.warning("⚠️ Avis non enregistré (pas clair)")
         else:
             new_data = pd.DataFrame({
                 "film": [movie_selected],
@@ -157,73 +189,60 @@ if st.button("🔍 Valider mon avis", type="primary"):
 
             st.success("✅ Avis sauvegardé !")
             st.rerun()
-# -----------------------------
-#Enregistrement 
 
+# =========================
+# REVIEWS DISPLAY
+# =========================
 st.subheader("📊 Avis sauvegardés")
 
 def load_reviews():
     file_path = "reviews.csv"
-    expected_columns = ["film", "review", "sentiment"]
+    cols = ["film", "review", "sentiment"]
 
-    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-        return pd.DataFrame(columns=expected_columns)
+    if not os.path.exists(file_path):
+        return pd.DataFrame(columns=cols)
 
     try:
         df = pd.read_csv(file_path)
+        if not all(col in df.columns for col in cols):
+            return pd.DataFrame(columns=cols)
+        return df[cols].dropna(how='all')
+    except:
+        return pd.DataFrame(columns=cols)
 
-        # Si le fichier n'a pas les bonnes colonnes → on le réinitialise
-        if not all(col in df.columns for col in expected_columns):
-            st.warning("Le fichier reviews.csv est mal formé. Il va être réinitialisé.")
-            return pd.DataFrame(columns=expected_columns)
-
-        df = df[expected_columns]                    # garder seulement les colonnes utiles
-        df = df.dropna(how='all').reset_index(drop=True)
-        return df
-
-    except Exception:
-        return pd.DataFrame(columns=expected_columns)
 df_reviews = load_reviews()
 
 if df_reviews.empty:
-    st.info("Aucun avis sauvegardé pour le moment.")
+    st.info("Aucun avis pour le moment.")
 else:
-    # Filtre par film
-    unique_films = sorted(df_reviews["film"].dropna().unique().tolist())
-    film_filter = st.selectbox(
-        "Filtrer par film",
-        ["Tous"] + unique_films
-    )
+    film_filter = st.selectbox("Filtrer", ["Tous"] + sorted(df_reviews["film"].unique()))
 
     if film_filter != "Tous":
-        filtered_reviews = df_reviews[df_reviews["film"] == film_filter].copy()
-    else:
-        filtered_reviews = df_reviews.copy()
+        df_reviews = df_reviews[df_reviews["film"] == film_filter]
 
-    st.dataframe(filtered_reviews, use_container_width=True)
+    st.dataframe(df_reviews, use_container_width=True)
 
-    # Statistiques
     st.subheader("📈 Statistiques")
-    total = len(filtered_reviews)
-    positives = (filtered_reviews["sentiment"].astype(str).str.contains("Positif", na=False)).sum()
+    total = len(df_reviews)
+    positives = df_reviews["sentiment"].str.contains("Positif").sum()
     negatives = total - positives
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total avis", total)
+    col1.metric("Total", total)
     col2.metric("😊 Positifs", positives)
     col3.metric("😡 Négatifs", negatives)
 
     if total > 0:
-        st.progress(positives / total, text=f"Pourcentage positif : {positives/total:.1%}")
+        st.progress(positives / total)
 
-
-# Sidebar
-
+# =========================
+# SIDEBAR
+# =========================
 st.sidebar.title("📘 À propos")
-st.sidebar.info("App d'analyse de sentiment sur les avis de films\n\nTechnologies : Streamlit + NLTK + Naive Bayes")
+st.sidebar.info("App NLP avec Naive Bayes + Decision Tree + GridSearchCV 🔥")
 
-if st.sidebar.button("🗑️ Effacer tous les avis"):
+if st.sidebar.button("🗑️ Effacer les avis"):
     if os.path.exists("reviews.csv"):
         os.remove("reviews.csv")
-        st.success("Tous les avis ont été supprimés.")
+        st.success("Avis supprimés")
         st.rerun()
