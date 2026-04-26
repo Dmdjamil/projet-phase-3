@@ -45,8 +45,21 @@ def preprocess(text):
 def train_model():
     try:
         df = pd.read_csv("data.csv")
-        df["clean_text"] = df["text"].apply(preprocess)
 
+        df["label"] = df["label"].astype(str).str.lower().str.strip()
+
+        df["label"] = df["label"].map({
+            "positive": 1,
+            "positif": 1,
+            "1": 1,
+            "negatif": 0,
+            "negative": 0,
+            "0": 0
+        })
+        
+        df = df.dropna()
+        
+        df["clean_text"] = df["text"].apply(preprocess)
         vectorizer = TfidfVectorizer()
         X = vectorizer.fit_transform(df["clean_text"])
         y = df["label"]
