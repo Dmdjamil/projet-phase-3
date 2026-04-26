@@ -10,22 +10,29 @@ from nltk.stem import WordNetLemmatizer, PorterStemmer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.model_selection import GridSearchCV  # ✅ AJOUT TUNING
+from sklearn.model_selection import GridSearchCV
 
+# =========================
 # CONFIG
+# =========================
 st.set_page_config(page_title="🎬 Sencine", layout="centered")
 
-# NLTK setup
+st.title("🎬 Sencine - Analyse de sentiments")
+
+# =========================
+# NLTK SETUP
+# =========================
 @st.cache_resource
 def load_nltk():
     nltk.download('punkt', quiet=True)
-    nltk.download('punkt_tab', quiet=True)
     nltk.download('stopwords', quiet=True)
     nltk.download('wordnet', quiet=True)
 
 load_nltk()
 
-# NLP Tools
+# =========================
+# NLP
+# =========================
 stop_words = set(stopwords.words('english') + stopwords.words('french'))
 lemmatizer = WordNetLemmatizer()
 stemmer = PorterStemmer()
@@ -39,78 +46,55 @@ def preprocess(text):
     return " ".join(tokens)
 
 # =========================
-# MODELS + TUNING 🔥
+# MODEL TRAINING + TUNING
 # =========================
 @st.cache_data
 def train_model():
-    try:
-        df = pd.read_csv("data.csv")
+    df = pd.read_csv("data.csv")
 
-        df["label"] = df["label"].astype(str).str.lower().str.strip()
+    df["label"] = df["label"].astype(str).str.lower().str.strip()
 
-        df["label"] = df["label"].map({
-            "positive": 1,
-            "positif": 1,
-            "1": 1,
-            "negatif": 0,
-            "negative": 0,
-            "0": 0
-        })
-        
-        df = df.dropna()
-        
-        df["clean_text"] = df["text"].apply(preprocess)
-        vectorizer = TfidfVectorizer()
-        X = vectorizer.fit_transform(df["clean_text"])
-        y = df["label"]
+    df["label"] = df["label"].map({
+        "positive": 1,
+        "positif": 1,
+        "1": 1,
+        "negative": 0,
+        "negatif": 0,
+        "0": 0
+    })
 
-        # =====================
-        # 🔵 NAIVE BAYES TUNING
-        # =====================
-        nb = MultinomialNB()
-        nb_params = {
-            "alpha": [0.1, 0.5, 1.0, 2.0]
-        }
+    df = df.dropna()
 
-        nb_grid = GridSearchCV(nb, nb_params, cv=3, n_jobs=-1)
-        nb_grid.fit(X, y)
-        nb_model = nb_grid.best_estimator_
+    df["clean_text"] = df["text"].apply(preprocess)
 
-        # =====================
-        # 🌳 DECISION TREE TUNING
-        # =====================
-        dt = DecisionTreeClassifier()
-        dt_params = {
-            "criterion": ["gini", "entropy"],
-            "max_depth": [None, 10, 20],
-            "min_samples_split": [2, 5, 10]
-        }
+    vectorizer = TfidfVectorizer()
+    X = vectorizer.fit_transform(df["clean_text"])
+    y = df["label"]
 
-        dt_grid = GridSearchCV(dt, dt_params, cv=3, n_jobs=-1)
-        dt_grid.fit(X, y)
-        dt_model = dt_grid.best_estimator_
+    # 🔵 Naive Bayes tuning
+    nb = MultinomialNB()
+    nb_grid = GridSearchCV(nb, {"alpha": [0.1, 0.5, 1, 2]}, cv=3)
+    nb_grid.fit(X, y)
+    nb_model = nb_grid.best_estimator_
 
-        # 🔥 Affichage dans sidebar
-        st.sidebar.write("🔧 NB params :", nb_grid.best_params_)
-        st.sidebar.write("🔧 DT params :", dt_grid.best_params_)
-        st.sidebar.write("📊 NB score :", round(nb_grid.best_score_, 3))
-        st.sidebar.write("📊 DT score :", round(dt_grid.best_score_, 3))
+    # 🌳 Decision Tree tuning
+    dt = DecisionTreeClassifier()
+    dt_grid = GridSearchCV(dt, {
+        "criterion": ["gini", "entropy"],
+        "max_depth": [None, 10, 20],
+        "min_samples_split": [2, 5, 10]
+    }, cv=3)
+    dt_grid.fit(X, y)
+    dt_model = dt_grid.best_estimator_
 
-        return nb_model, dt_model, vectorizer
-
-    except FileNotFoundError:
-        st.error("❌ Fichier **data.csv** introuvable.")
-        st.stop()
+    return nb_model, dt_model, vectorizer
 
 nb_model, dt_model, vectorizer = train_model()
 
 # =========================
-# CHOIX DU MODELE
+# MODELS CHOICE
 # =========================
-model_choice = st.radio(
-    "🤖 Choisissez le modèle",
-    ["Naive Bayes", "Decision Tree"]
-)
+model_choice = st.radio("🤖 Choisir modèle", ["Naive Bayes", "Decision Tree"])
 
 # =========================
 # PREDICTION
@@ -119,10 +103,7 @@ def predict(text, model_choice):
     clean = preprocess(text)
     vect = vectorizer.transform([clean])
 
-    if model_choice == "Naive Bayes":
-        model = nb_model
-    else:
-        model = dt_model
+    model = nb_model if model_choice == "Naive Bayes" else dt_model
 
     pred = model.predict(vect)[0]
 
@@ -133,129 +114,60 @@ def predict(text, model_choice):
         confidence = 1.0
 
     if confidence < 0.6:
-        return "🤔 Veuillez donner un avis plus clair !", clean, confidence
+        return "🤔 Avis pas clair", confidence
 
-    if pred == 1:
-        result = "😊 Positif"
-    else:
-        result = "😡 Négatif"
-
-    return result, clean, confidence
+    return ("😊 Positif" if pred == 1 else "😡 Négatif"), confidence
 
 # =========================
-# MOVIES
+# APPLICATION
 # =========================
-st.title("🎬 Analyser les films et les séries sénégalaises")
+st.subheader("💬 Tester un avis")
 
-try:
-    movies_df = pd.read_csv("movies.csv")
-    movies_df["titre"] = movies_df["titre"].astype(str).str.strip()
-    movie_list = sorted(movies_df["titre"].unique().tolist())
+text = st.text_area("Écris ton avis ici")
 
-except FileNotFoundError:
-    st.error("❌ Fichier **movies.csv** introuvable.")
-    st.stop()
-
-st.subheader("🎬 Choisissez un film ou une série")
-movie_selected = st.selectbox("Liste des films et séries", movie_list)
-
-selected_row = movies_df[movies_df["titre"] == movie_selected].iloc[0]
-
-st.write(f"**Type :** {selected_row['type']}")
-st.write(f"**Année :** {selected_row.get('annee', 'Non renseignée')}")
-st.write(f"**Réalisateur :** {selected_row.get('realisateur', 'Non renseigné')}")
-st.write("📖 **Description :**")
-st.write(selected_row["description"])
+if st.button("Analyser"):
+    if text:
+        result, conf = predict(text, model_choice)
+        st.success(result)
+        st.write("Confiance :", round(conf, 2))
 
 # =========================
-# USER REVIEW
+# EXPPLICATION (UNE SEULE PAGE)
 # =========================
-st.subheader("💬 Donnez votre avis")
-user_review = st.text_area("Votre impression", height=150)
+st.markdown("---")
+st.title("📘 Explication du projet")
 
-if st.button("🔍 Valider mon avis", type="primary"):
-    if not user_review.strip():
-        st.warning("Veuillez écrire un avis.")
-    else:
-        result, clean_text, confidence = predict(user_review, model_choice)
+st.markdown("""
+## 🧠 Phase 1 : NLP
+- Tokenization
+- Stopwords removal
+- Lemmatization
+- Stemming  
+👉 Nettoyage du texte
 
-        st.success(f"**Sentiment :** {result}")
-        st.write(f"Confiance : {confidence:.2f}")
+---
 
-        with st.expander("Texte nettoyé"):
-            st.code(clean_text)
+## 🤖 Phase 2 : Modèles
+- Naive Bayes
+- Decision Tree  
+👉 Classification des sentiments
 
-        if confidence < 0.6:
-            st.warning("⚠️ Avis non enregistré (pas clair)")
-        else:
-            new_data = pd.DataFrame({
-                "film": [movie_selected],
-                "review": [user_review],
-                "sentiment": [result]
-            })
+---
 
-            file_path = "reviews.csv"
-            if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                new_data.to_csv(file_path, index=False)
-            else:
-                new_data.to_csv(file_path, mode='a', header=False, index=False)
+## 🔧 Phase 3 : Tuning
+- GridSearchCV
+- Optimisation automatique des paramètres  
+👉 Améliorer la précision
 
-            st.success("✅ Avis sauvegardé !")
-            st.rerun()
+---
 
-# =========================
-# REVIEWS DISPLAY
-# =========================
-st.subheader("📊 Avis sauvegardés")
+## 📊 Phase 4 : Performance
+- Évaluation des modèles
+- Analyse des résultats
+👉 Vérifier la fiabilité du système
 
-def load_reviews():
-    file_path = "reviews.csv"
-    cols = ["film", "review", "sentiment"]
+---
 
-    if not os.path.exists(file_path):
-        return pd.DataFrame(columns=cols)
-
-    try:
-        df = pd.read_csv(file_path)
-        if not all(col in df.columns for col in cols):
-            return pd.DataFrame(columns=cols)
-        return df[cols].dropna(how='all')
-    except:
-        return pd.DataFrame(columns=cols)
-
-df_reviews = load_reviews()
-
-if df_reviews.empty:
-    st.info("Aucun avis pour le moment.")
-else:
-    film_filter = st.selectbox("Filtrer", ["Tous"] + sorted(df_reviews["film"].unique()))
-
-    if film_filter != "Tous":
-        df_reviews = df_reviews[df_reviews["film"] == film_filter]
-
-    st.dataframe(df_reviews, use_container_width=True)
-
-    st.subheader("📈 Statistiques")
-    total = len(df_reviews)
-    positives = df_reviews["sentiment"].str.contains("Positif").sum()
-    negatives = total - positives
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total", total)
-    col2.metric("😊 Positifs", positives)
-    col3.metric("😡 Négatifs", negatives)
-
-    if total > 0:
-        st.progress(positives / total)
-
-# =========================
-# SIDEBAR
-# =========================
-st.sidebar.title("📘 À propos")
-st.sidebar.info("App NLP avec Naive Bayes + Decision Tree + GridSearchCV 🔥")
-
-if st.sidebar.button("🗑️ Effacer les avis"):
-    if os.path.exists("reviews.csv"):
-        os.remove("reviews.csv")
-        st.success("Avis supprimés")
-        st.rerun()
+## 🎯 Conclusion
+Ce projet permet de classifier automatiquement les avis grâce au NLP et au Machine Learning.
+""")
